@@ -107,6 +107,21 @@
   .day::before, .day::after { content: ''; flex: 1; height: 1px; background: var(--rule) }
   .day:first-of-type { margin-top: 2px }
 
+  .chapter {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 26px 0 18px;
+    color: var(--prompt);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    user-select: none;
+  }
+
+  .chapter::before, .chapter::after { content: ''; flex: 1; height: 1px; background: var(--prompt); opacity: .35 }
+  .chapter .stamp { flex: none; color: var(--dim); font-size: 10px; letter-spacing: normal; text-transform: none }
+
   .entry { display: flex; gap: 10px; margin-bottom: 11px }
 
   .entry .stamp {
@@ -253,7 +268,7 @@
     margin-bottom: 8px;
   }
 
-  #taskform {
+  #taskform, #chapterform {
     flex: none;
     display: flex;
     align-items: center;
@@ -262,7 +277,7 @@
     border-top: 1px solid var(--rule);
   }
 
-  #taskinput {
+  #taskinput, #chapterinput {
     flex: 1;
     font: inherit;
     font-size: 16px;
@@ -275,7 +290,7 @@
     caret-color: var(--prompt);
   }
 
-  #taskinput::placeholder { color: var(--dim) }
+  #taskinput::placeholder, #chapterinput::placeholder { color: var(--dim) }
 </style>
 </head>
 <body>
@@ -284,6 +299,7 @@
   <span class="title">logbook</span>
   <span id="count">0 entries</span>
   <span class="spacer"></span>
+  <button id="chapter" type="button">chapter</button>
   <button id="tasks" type="button">tasks</button>
   <button id="menu" type="button" aria-label="file menu">&#9776;</button>
 </header>
@@ -301,6 +317,21 @@
     <form id="taskform">
       <span class="caret">+</span>
       <input id="taskinput" type="text" placeholder="new mission" autocomplete="off" autocapitalize="sentences" spellcheck="false">
+    </form>
+  </div>
+</div>
+
+<div id="csheet" class="sheet" hidden>
+  <div class="box">
+    <div class="grip"></div>
+    <div class="head">
+      <span>new chapter</span>
+      <span class="spacer"></span>
+      <button id="cclose" type="button">close</button>
+    </div>
+    <form id="chapterform">
+      <span class="caret">&sect;</span>
+      <input id="chapterinput" type="text" placeholder="chapter title (optional), press enter" autocomplete="off" autocapitalize="sentences" spellcheck="false">
     </form>
   </div>
 </div>
@@ -349,6 +380,7 @@
   const hasFS = canOpen || canCreate
   const STAMP = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] ([\s\S]*)$/
   const TASK = /^task ([+\-]) ([\s\S]*)$/
+  const CHAPTER = /^chapter ([\s\S]*)$/
 
   const sheet = document.getElementById('sheet')
   const tasklist = document.getElementById('tasklist')
@@ -357,6 +389,10 @@
   const tasksBtn = document.getElementById('tasks')
   const msheet = document.getElementById('msheet')
   const menuBtn = document.getElementById('menu')
+  const csheet = document.getElementById('csheet')
+  const chapterform = document.getElementById('chapterform')
+  const chapterinput = document.getElementById('chapterinput')
+  const chapterBtn = document.getElementById('chapter')
 
   let handle = null
   let entries = []
@@ -413,6 +449,11 @@
           out.push({ t: m[1], v: op[2], kind: op[1] === '+' ? 'add' : 'del' })
           return
         }
+        const ch = v.match(CHAPTER)
+        if (ch) {
+          out.push({ t: m[1], v: ch[1], kind: 'chapter' })
+          return
+        }
         const flag = v.charAt(0) === '\u200B'
         if (flag) v = v.slice(1)
         out.push({ t: m[1], v: v, flag: flag, kind: 'log' })
@@ -428,6 +469,7 @@
       let body
       if (e.kind === 'add') body = 'task + ' + e.v
       else if (e.kind === 'del') body = 'task - ' + e.v
+      else if (e.kind === 'chapter') body = 'chapter ' + e.v
       else body = (e.flag ? '\u200B' : '') + e.v
       return '[' + e.t + '] ' + body
     }).join('\n') + '\n'
@@ -459,6 +501,19 @@
       sep.appendChild(label)
       log.appendChild(sep)
     }
+    if (entry.kind === 'chapter') {
+      const div = document.createElement('div')
+      div.className = 'chapter'
+      const label = document.createElement('span')
+      label.textContent = entry.v || 'chapter'
+      const s = document.createElement('span')
+      s.className = 'stamp'
+      s.textContent = entry.t.slice(11)
+      div.appendChild(label)
+      div.appendChild(s)
+      log.appendChild(div)
+      return
+    }
     const div = document.createElement('div')
     div.className = entry.flag ? 'entry flag' : 'entry'
     const s = document.createElement('span')
@@ -473,7 +528,7 @@
   }
 
   function redraw() {
-    Array.prototype.slice.call(log.querySelectorAll('.entry, .day')).forEach(function (n) { n.remove() })
+    Array.prototype.slice.call(log.querySelectorAll('.entry, .day, .chapter')).forEach(function (n) { n.remove() })
     shownDay = null
     entries.forEach(function (e) { if (e.kind !== 'add' && e.kind !== 'del') render(e) })
     refresh()
@@ -481,7 +536,7 @@
   }
 
   function refresh() {
-    const n = entries.filter(function (e) { return e.kind !== 'add' && e.kind !== 'del' }).length
+    const n = entries.filter(function (e) { return e.kind === 'log' }).length
     count.textContent = n + (n === 1 ? ' entry' : ' entries')
     const open = missions().length
     tasksBtn.textContent = open ? 'tasks ' + open : 'tasks'
@@ -561,6 +616,14 @@
       drawTasks()
       refresh()
     }
+  }
+
+  async function addChapter(title) {
+    const entry = { t: stampNow(), v: title, kind: 'chapter' }
+    if (!await commit(entry)) return
+    render(entry)
+    refresh()
+    bottom()
   }
 
   function printMissions() {
@@ -776,10 +839,35 @@
   sheet.addEventListener('click', function (e) { if (e.target === sheet) closeSheet() })
   msheet.addEventListener('click', function (e) { if (e.target === msheet) msheet.hidden = true })
 
+  function closeChapterSheet() {
+    csheet.hidden = true
+    chapterinput.value = ''
+  }
+
+  chapterBtn.addEventListener('click', function () {
+    if (!handle) {
+      say('No file linked yet. Tap the menu to open or create one.', true)
+      return
+    }
+    csheet.hidden = false
+    chapterinput.focus()
+  })
+
+  document.getElementById('cclose').addEventListener('click', closeChapterSheet)
+  csheet.addEventListener('click', function (e) { if (e.target === csheet) closeChapterSheet() })
+
+  chapterform.addEventListener('submit', function (e) {
+    e.preventDefault()
+    const v = chapterinput.value.trim()
+    closeChapterSheet()
+    addChapter(v)
+  })
+
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return
     if (!sheet.hidden) closeSheet()
     if (!msheet.hidden) msheet.hidden = true
+    if (!csheet.hidden) closeChapterSheet()
   })
 
   taskform.addEventListener('submit', function (e) {
