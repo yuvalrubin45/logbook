@@ -486,6 +486,7 @@
 
   let handle = null
   let entries = []
+  let loaded = false
 
   /* ---------- handle persistence ---------- */
 
@@ -755,6 +756,16 @@
   }
 
   async function commitMany(list) {
+    if (!handle) return false
+    if (!loaded) {
+      if (!await allowed(handle, 'readwrite')) {
+        say('Open the menu and pick ' + handle.name + ' to reconnect it for this session.', true)
+        return false
+      }
+      await readFile()
+      connected()
+      redraw()
+    }
     const start = entries.length
     list.forEach(function (e) { entries.push(e) })
     try {
@@ -857,6 +868,7 @@
   async function readFile() {
     const f = await handle.getFile()
     entries = parse(await f.text())
+    loaded = true
   }
 
   async function writeFile() {
@@ -935,8 +947,6 @@
       await readFile()
       connected()
       redraw()
-    } else {
-      say('Open the menu and pick ' + h.name + ' to reconnect it for this session.', true)
     }
   }
 
