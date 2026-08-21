@@ -355,9 +355,6 @@
 
   #taskform .field-row { display: flex; align-items: flex-start; gap: var(--sp-2) }
 
-  .datefield-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2) }
-  .datefield-row .datefield { width: 100%; text-align: center }
-
   #taskinput, #chapterinput {
     flex: 1;
     min-width: 0;
@@ -377,19 +374,6 @@
   }
 
   #taskinput::placeholder, #chapterinput::placeholder { color: var(--dim) }
-
-  .datefield {
-    flex: none;
-    font: inherit;
-    font-size: var(--fs-meta);
-    color: var(--dim);
-    background: none;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius);
-    padding: var(--sp-1) 6px;
-    min-height: var(--tap-min);
-    color-scheme: dark;
-  }
 
 </style>
 </head>
@@ -420,10 +404,6 @@
       <div class="field-row">
         <span class="caret">+</span>
         <textarea id="taskinput" rows="1" placeholder="new mission" autocomplete="off" autocapitalize="sentences" spellcheck="false" dir="auto"></textarea>
-      </div>
-      <div class="datefield-row">
-        <input id="taskdate" class="datefield" type="date" title="schedule for a later date (optional)" aria-label="schedule for">
-        <input id="tasktime" class="datefield" type="time" title="schedule for a specific time (optional)" aria-label="schedule at time">
       </div>
     </form>
   </div>
@@ -495,8 +475,6 @@
   const tasklist = document.getElementById('tasklist')
   const taskform = document.getElementById('taskform')
   const taskinput = document.getElementById('taskinput')
-  const taskdate = document.getElementById('taskdate')
-  const tasktime = document.getElementById('tasktime')
   const tasksBtn = document.getElementById('tasks')
   const msheet = document.getElementById('msheet')
   const menuBtn = document.getElementById('menu')
@@ -563,11 +541,6 @@
   function dueReached(due) {
     if (!due) return true
     return due.length > 10 ? due <= nowMinuteISO() : due <= todayISO()
-  }
-
-  function combineDue(datePart, timePart) {
-    if (!datePart) return null
-    return timePart ? datePart + 'T' + timePart : datePart
   }
 
   function plusHours(h) {
@@ -861,8 +834,6 @@
   function closeSheet() {
     sheet.hidden = true
     taskinput.value = ''
-    taskdate.value = ''
-    tasktime.value = ''
     autosize(taskinput)
   }
 
@@ -1104,12 +1075,9 @@
     e.preventDefault()
     const v = taskinput.value.trim()
     if (!v) return
-    const due = combineDue(taskdate.value, tasktime.value)
     taskinput.value = ''
-    taskdate.value = ''
-    tasktime.value = ''
     autosize(taskinput)
-    addMission(v, due)
+    addMission(v)
   })
 
   reschedAllBtn.addEventListener('click', async function () {
