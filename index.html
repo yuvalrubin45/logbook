@@ -700,7 +700,6 @@
   }
 
   function openMissions() { return partitionMissions().open }
-  function scheduledMissions() { return partitionMissions().scheduled }
 
   function dueLabel(due) { return due.replace('T', '  ') }
 
@@ -770,10 +769,10 @@
 
   function commit(entry) { return commitMany([entry]) }
 
-  async function addMission(v, due) {
+  async function addMission(v) {
     if (!v) return
     if (missions().some(function (m) { return m.v === v })) return
-    if (await commit({ t: stampNow(), v: v, due: due || null, kind: 'add' })) {
+    if (await commit({ t: stampNow(), v: v, due: null, kind: 'add' })) {
       drawTasks()
       refresh()
     }

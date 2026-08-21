@@ -9,7 +9,6 @@ A tiny, self-contained journal app that runs entirely in the browser — single 
 - Chapter dividers mark sections within a log
 - Right-to-left scripts (e.g. Hebrew) are detected automatically per line and aligned/punctuated correctly
 - Saves directly to a local file on disk via the File System Access API (Chrome/Edge), so your log lives in a plain text-ish `.html` file you control
-- Works offline, installable as a PWA
 
 ## Usage
 
