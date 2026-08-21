@@ -700,7 +700,6 @@
   }
 
   function openMissions() { return partitionMissions().open }
-  function scheduledMissions() { return partitionMissions().scheduled }
 
   function dueLabel(due) { return due.replace('T', '  ') }
 
@@ -770,10 +769,10 @@
 
   function commit(entry) { return commitMany([entry]) }
 
-  async function addMission(v, due) {
+  async function addMission(v) {
     if (!v) return
     if (missions().some(function (m) { return m.v === v })) return
-    if (await commit({ t: stampNow(), v: v, due: due || null, kind: 'add' })) {
+    if (await commit({ t: stampNow(), v: v, due: null, kind: 'add' })) {
       drawTasks()
       refresh()
     }
@@ -816,9 +815,10 @@
 
   function printMissions() {
     const parts = partitionMissions()
+    const total = parts.open.length + parts.scheduled.length
     let body = parts.open.length
-      ? 'tasks (' + parts.open.length + ')\n' + parts.open.map(function (m, i) { return (i + 1) + '. ' + m.v }).join('\n')
-      : 'tasks (0)'
+      ? 'tasks (' + total + ')\n' + parts.open.map(function (m, i) { return (i + 1) + '. ' + m.v }).join('\n')
+      : 'tasks (' + total + ')'
     if (parts.scheduled.length) {
       body += '\n\nscheduled\n' + parts.scheduled.map(function (m) { return dueLabel(m.due) + '  ' + m.v }).join('\n')
     }
@@ -1120,7 +1120,7 @@
   }
 
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', syncViewportHeight)
+    window.visualViewport.addEventListener('resize', function () { requestAnimationFrame(syncViewportHeight) })
     window.visualViewport.addEventListener('scroll', syncViewportHeight)
   } else {
     window.addEventListener('resize', syncViewportHeight)
