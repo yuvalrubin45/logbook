@@ -149,7 +149,6 @@
   .chapter .row {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
     gap: var(--sp-2);
   }
 
@@ -164,7 +163,7 @@
     text-transform: uppercase;
   }
 
-  .chapter .stamp { flex: none; color: var(--dim); font-size: var(--fs-meta) }
+  .chapter .stamp { flex: none; width: 56px; color: var(--dim); font-size: var(--fs-meta) }
 
   .entry { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-3) }
 
@@ -300,6 +299,19 @@
   }
 
   .task .x:hover, .task .x:focus-visible { color: var(--danger); border-color: transparent }
+
+  .task .snooze {
+    flex: none;
+    border: none;
+    background: none;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+    min-height: var(--tap-min);
+    padding: 0 var(--sp-2);
+    border-radius: var(--radius);
+  }
+
+  .task .snooze:hover, .task .snooze:focus-visible { color: var(--prompt); border-color: transparent }
   .task.scheduled { opacity: .6 }
   .empty { color: var(--dim); padding: var(--sp-4) 0 }
   .sublabel { color: var(--dim); font-size: var(--fs-meta); letter-spacing: .08em; text-transform: uppercase; margin: var(--sp-4) 0 var(--sp-1) }
@@ -379,18 +391,6 @@
     color-scheme: dark;
   }
 
-  .resched-row {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-2);
-    padding: var(--sp-3) var(--sp-3);
-    border-top: 1px solid var(--rule);
-  }
-
-  .resched-row[hidden] { display: none }
-  .resched-row .label { color: var(--dim); font-size: var(--fs-meta) }
-  .resched-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2) }
-  .resched-actions button { width: 100% }
 </style>
 </head>
 <body>
@@ -411,20 +411,9 @@
     <div class="head">
       <span>open missions</span>
       <span class="spacer"></span>
-      <button id="reschedAllBtn" type="button">reschedule</button>
+      <button id="reschedAllBtn" type="button">+12h</button>
       <button id="print" type="button">print</button>
       <button id="close" type="button">close</button>
-    </div>
-    <div id="reschedRow" class="resched-row" hidden>
-      <span class="label">move active tasks to</span>
-      <div class="datefield-row">
-        <input id="reschedDate" class="datefield" type="date">
-        <input id="reschedTime" class="datefield" type="time">
-      </div>
-      <div class="resched-actions">
-        <button id="reschedApply" type="button">apply</button>
-        <button id="reschedCancel" type="button">cancel</button>
-      </div>
     </div>
     <div id="tasklist"></div>
     <form id="taskform">
@@ -516,9 +505,6 @@
   const chapterinput = document.getElementById('chapterinput')
   const chapterBtn = document.getElementById('chapter')
   const reschedAllBtn = document.getElementById('reschedAllBtn')
-  const reschedRow = document.getElementById('reschedRow')
-  const reschedDate = document.getElementById('reschedDate')
-  const reschedTime = document.getElementById('reschedTime')
 
   let handle = null
   let entries = []
@@ -582,6 +568,11 @@
   function combineDue(datePart, timePart) {
     if (!datePart) return null
     return timePart ? datePart + 'T' + timePart : datePart
+  }
+
+  function plusHours(h) {
+    const d = new Date(Date.now() + h * 60 * 60 * 1000)
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes())
   }
 
   function parse(text) {
@@ -672,8 +663,8 @@
       const s = document.createElement('span')
       s.className = 'stamp'
       s.textContent = entry.t.slice(11)
-      row.appendChild(label)
       row.appendChild(s)
+      row.appendChild(label)
       const bar2 = document.createElement('div')
       bar2.className = 'bar'
       div.appendChild(bar1)
@@ -749,6 +740,12 @@
     const t = document.createElement('div')
     t.className = 'v'
     fillLines(t, m.v)
+    const snooze = document.createElement('button')
+    snooze.className = 'snooze'
+    snooze.type = 'button'
+    snooze.textContent = '+12h'
+    snooze.setAttribute('aria-label', 'push 12 hours')
+    snooze.addEventListener('click', function () { rescheduleMission(m.v, plusHours(12)) })
     const x = document.createElement('button')
     x.className = 'x'
     x.type = 'button'
@@ -757,6 +754,7 @@
     x.addEventListener('click', function () { removeMission(m.v) })
     row.appendChild(n)
     row.appendChild(t)
+    row.appendChild(snooze)
     row.appendChild(x)
     return row
   }
@@ -816,6 +814,14 @@
     }
   }
 
+  async function rescheduleMission(v, due) {
+    if (!missions().some(function (m) { return m.v === v })) return
+    if (await commit({ t: stampNow(), v: v, due: due, kind: 'reschedule' })) {
+      drawTasks()
+      refresh()
+    }
+  }
+
   async function rescheduleAllOpen(due) {
     const open = openMissions()
     if (!open.length) return
@@ -858,13 +864,6 @@
     taskdate.value = ''
     tasktime.value = ''
     autosize(taskinput)
-    hideReschedRow()
-  }
-
-  function hideReschedRow() {
-    reschedRow.hidden = true
-    reschedDate.value = ''
-    reschedTime.value = ''
   }
 
   function bottom() { log.scrollTop = log.scrollHeight }
@@ -1096,7 +1095,6 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return
-    if (!reschedRow.hidden) { hideReschedRow(); return }
     if (!sheet.hidden) closeSheet()
     if (!msheet.hidden) msheet.hidden = true
     if (!csheet.hidden) closeChapterSheet()
@@ -1114,22 +1112,9 @@
     addMission(v, due)
   })
 
-  reschedAllBtn.addEventListener('click', function () {
+  reschedAllBtn.addEventListener('click', async function () {
     if (reschedAllBtn.disabled) return
-    reschedRow.hidden = !reschedRow.hidden
-    if (!reschedRow.hidden) reschedDate.focus()
-  })
-
-  document.getElementById('reschedCancel').addEventListener('click', hideReschedRow)
-
-  document.getElementById('reschedApply').addEventListener('click', async function () {
-    const due = combineDue(reschedDate.value, reschedTime.value)
-    if (!due) {
-      say('Pick a date to reschedule to.', true)
-      return
-    }
-    hideReschedRow()
-    await rescheduleAllOpen(due)
+    await rescheduleAllOpen(plusHours(12))
   })
 
   document.getElementById('send').addEventListener('click', async function () {
