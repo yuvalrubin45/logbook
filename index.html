@@ -109,18 +109,30 @@
 
   .chapter {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 10px;
-    margin: 26px 0 18px;
-    color: var(--prompt);
-    font-size: 11px;
-    letter-spacing: .1em;
-    text-transform: uppercase;
+    margin: 36px 0 24px;
     user-select: none;
   }
 
-  .chapter::before, .chapter::after { content: ''; flex: 1; height: 1px; background: var(--prompt); opacity: .35 }
-  .chapter .stamp { flex: none; color: var(--dim); font-size: 10px; letter-spacing: normal; text-transform: none }
+  .chapter .bar { height: 3px; border-radius: 2px; background: var(--prompt) }
+
+  .chapter .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .chapter .label {
+    color: var(--prompt);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  .chapter .stamp { flex: none; color: var(--dim); font-size: 10px }
 
   .entry { display: flex; gap: 10px; margin-bottom: 11px }
 
@@ -140,7 +152,8 @@
     overflow-wrap: anywhere;
   }
 
-  .entry.flag .text { color: #e06c6c }
+  .entry.flag { border-left: 3px solid #e06c6c; padding-left: 8px; background: rgba(224, 108, 108, .07); border-radius: 3px }
+  .entry.flag .text { color: #e06c6c; font-weight: 700; font-size: 15.5px }
   .entry.flag .stamp { color: #a05555 }
 
   .notice { color: var(--dim); padding: 4px 0 14px; white-space: pre-wrap }
@@ -247,7 +260,10 @@
   }
 
   .task .x:hover, .task .x:focus-visible { color: #e06c6c; border-color: transparent }
+  .task.scheduled { opacity: .6 }
+  .task .due { flex: none; color: var(--stamp); font-size: 11px }
   .empty { color: var(--dim); padding: 14px 0 }
+  .sublabel { color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin: 14px 0 4px }
 
   .menu { padding: 10px 12px calc(12px + env(safe-area-inset-bottom)) }
 
@@ -271,7 +287,7 @@
   #taskform, #chapterform {
     flex: none;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--rule);
@@ -279,18 +295,35 @@
 
   #taskinput, #chapterinput {
     flex: 1;
+    min-width: 0;
     font: inherit;
     font-size: 16px;
     color: var(--fg);
     background: none;
     border: none;
     outline: none;
+    resize: none;
     padding: 0;
-    min-height: 34px;
+    padding-top: 1px;
+    height: 26px;
+    max-height: 140px;
     caret-color: var(--prompt);
   }
 
   #taskinput::placeholder, #chapterinput::placeholder { color: var(--dim) }
+
+  #taskdate {
+    flex: none;
+    font: inherit;
+    font-size: 13px;
+    color: var(--dim);
+    background: none;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 4px 6px;
+    min-height: 30px;
+    color-scheme: dark;
+  }
 </style>
 </head>
 <body>
@@ -316,7 +349,8 @@
     <div id="tasklist"></div>
     <form id="taskform">
       <span class="caret">+</span>
-      <input id="taskinput" type="text" placeholder="new mission" autocomplete="off" autocapitalize="sentences" spellcheck="false">
+      <textarea id="taskinput" rows="1" placeholder="new mission" autocomplete="off" autocapitalize="sentences" spellcheck="false" dir="auto"></textarea>
+      <input id="taskdate" type="date" title="schedule for a later date (optional)" aria-label="schedule for">
     </form>
   </div>
 </div>
@@ -331,7 +365,7 @@
     </div>
     <form id="chapterform">
       <span class="caret">&sect;</span>
-      <input id="chapterinput" type="text" placeholder="chapter title (optional), press enter" autocomplete="off" autocapitalize="sentences" spellcheck="false">
+      <textarea id="chapterinput" rows="1" placeholder="chapter title (optional), press enter" autocomplete="off" autocapitalize="sentences" spellcheck="false" dir="auto"></textarea>
     </form>
   </div>
 </div>
@@ -362,7 +396,7 @@
 
 <form id="form">
   <span class="caret">&gt;</span>
-  <textarea id="input" rows="1" placeholder="write a line, press enter" autocomplete="off" autocapitalize="sentences" spellcheck="false"></textarea>
+  <textarea id="input" rows="1" placeholder="write a line, press enter" autocomplete="off" autocapitalize="sentences" spellcheck="false" dir="auto"></textarea>
 </form>
 
 <script>
@@ -379,13 +413,14 @@
   const canCreate = typeof window.showSaveFilePicker === 'function'
   const hasFS = canOpen || canCreate
   const STAMP = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] ([\s\S]*)$/
-  const TASK = /^task ([+\-]) ([\s\S]*)$/
+  const TASK = /^task ([+\-])(?:@(\d{4}-\d{2}-\d{2}))? ([\s\S]*)$/
   const CHAPTER = /^chapter ([\s\S]*)$/
 
   const sheet = document.getElementById('sheet')
   const tasklist = document.getElementById('tasklist')
   const taskform = document.getElementById('taskform')
   const taskinput = document.getElementById('taskinput')
+  const taskdate = document.getElementById('taskdate')
   const tasksBtn = document.getElementById('tasks')
   const msheet = document.getElementById('msheet')
   const menuBtn = document.getElementById('menu')
@@ -438,6 +473,11 @@
            ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
   }
 
+  function todayISO() {
+    const d = new Date()
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+  }
+
   function parse(text) {
     const out = []
     text.replace(/^\uFEFF/, '').split('\n').forEach(function (line) {
@@ -446,7 +486,7 @@
         let v = m[2]
         const op = v.match(TASK)
         if (op) {
-          out.push({ t: m[1], v: op[2], kind: op[1] === '+' ? 'add' : 'del' })
+          out.push({ t: m[1], v: op[3], due: op[2] || null, kind: op[1] === '+' ? 'add' : 'del' })
           return
         }
         const ch = v.match(CHAPTER)
@@ -467,7 +507,7 @@
   function serialize() {
     return '\uFEFF' + entries.map(function (e) {
       let body
-      if (e.kind === 'add') body = 'task + ' + e.v
+      if (e.kind === 'add') body = 'task +' + (e.due ? '@' + e.due : '') + ' ' + e.v
       else if (e.kind === 'del') body = 'task - ' + e.v
       else if (e.kind === 'chapter') body = 'chapter ' + e.v
       else body = (e.flag ? '\u200B' : '') + e.v
@@ -504,13 +544,24 @@
     if (entry.kind === 'chapter') {
       const div = document.createElement('div')
       div.className = 'chapter'
+      const bar1 = document.createElement('div')
+      bar1.className = 'bar'
+      const row = document.createElement('div')
+      row.className = 'row'
       const label = document.createElement('span')
+      label.className = 'label'
+      label.dir = 'auto'
       label.textContent = entry.v || 'chapter'
       const s = document.createElement('span')
       s.className = 'stamp'
       s.textContent = entry.t.slice(11)
-      div.appendChild(label)
-      div.appendChild(s)
+      row.appendChild(label)
+      row.appendChild(s)
+      const bar2 = document.createElement('div')
+      bar2.className = 'bar'
+      div.appendChild(bar1)
+      div.appendChild(row)
+      div.appendChild(bar2)
       log.appendChild(div)
       return
     }
@@ -521,6 +572,7 @@
     s.textContent = entry.t.slice(11)
     const t = document.createElement('div')
     t.className = 'text'
+    t.dir = 'auto'
     t.textContent = entry.v
     div.appendChild(s)
     div.appendChild(t)
@@ -538,55 +590,69 @@
   function refresh() {
     const n = entries.filter(function (e) { return e.kind === 'log' }).length
     count.textContent = n + (n === 1 ? ' entry' : ' entries')
-    const open = missions().length
+    const open = openMissions().length
     tasksBtn.textContent = open ? 'tasks ' + open : 'tasks'
   }
 
   /* ---------- missions ---------- */
 
   function missions() {
-    const list = []
+    const map = new Map()
     entries.forEach(function (e) {
       if (e.kind === 'add') {
-        if (list.indexOf(e.v) === -1) list.push(e.v)
+        map.set(e.v, e.due || null)
       } else if (e.kind === 'del') {
-        const i = list.indexOf(e.v)
-        if (i !== -1) list.splice(i, 1)
+        map.delete(e.v)
       }
     })
-    return list
+    return Array.from(map, function (pair) { return { v: pair[0], due: pair[1] } })
+  }
+
+  function isDue(m) { return !m.due || m.due <= todayISO() }
+  function openMissions() { return missions().filter(isDue) }
+  function scheduledMissions() { return missions().filter(function (m) { return !isDue(m) }) }
+
+  function taskRow(m, label, scheduled) {
+    const row = document.createElement('div')
+    row.className = scheduled ? 'task scheduled' : 'task'
+    const n = document.createElement('span')
+    n.className = 'n'
+    n.textContent = label
+    const t = document.createElement('span')
+    t.className = 'v'
+    t.dir = 'auto'
+    t.textContent = m.v
+    const x = document.createElement('button')
+    x.className = 'x'
+    x.type = 'button'
+    x.textContent = '\u00d7'
+    x.setAttribute('aria-label', 'remove')
+    x.addEventListener('click', function () { removeMission(m.v) })
+    row.appendChild(n)
+    row.appendChild(t)
+    row.appendChild(x)
+    return row
   }
 
   function drawTasks() {
     tasklist.innerHTML = ''
-    const list = missions()
-    if (!list.length) {
+    const open = openMissions()
+    const scheduled = scheduledMissions()
+    if (!open.length && !scheduled.length) {
       const p = document.createElement('div')
       p.className = 'empty'
       p.textContent = 'nothing open'
       tasklist.appendChild(p)
       return
     }
-    list.forEach(function (v, i) {
-      const row = document.createElement('div')
-      row.className = 'task'
-      const n = document.createElement('span')
-      n.className = 'n'
-      n.textContent = (i + 1) + '.'
-      const t = document.createElement('span')
-      t.className = 'v'
-      t.textContent = v
-      const x = document.createElement('button')
-      x.className = 'x'
-      x.type = 'button'
-      x.textContent = '\u00d7'
-      x.setAttribute('aria-label', 'remove')
-      x.addEventListener('click', function () { removeMission(v) })
-      row.appendChild(n)
-      row.appendChild(t)
-      row.appendChild(x)
-      tasklist.appendChild(row)
-    })
+    open.forEach(function (m, i) { tasklist.appendChild(taskRow(m, (i + 1) + '.', false)) })
+    if (scheduled.length) {
+      const label = document.createElement('div')
+      label.className = 'sublabel'
+      label.textContent = 'scheduled'
+      tasklist.appendChild(label)
+      scheduled.forEach(function (m) { tasklist.appendChild(taskRow(m, m.due, true)) })
+    }
   }
 
   async function commit(entry) {
@@ -601,17 +667,17 @@
     return true
   }
 
-  async function addMission(v) {
+  async function addMission(v, due) {
     if (!v) return
-    if (missions().indexOf(v) !== -1) return
-    if (await commit({ t: stampNow(), v: v, kind: 'add' })) {
+    if (missions().some(function (m) { return m.v === v })) return
+    if (await commit({ t: stampNow(), v: v, due: due || null, kind: 'add' })) {
       drawTasks()
       refresh()
     }
   }
 
   async function removeMission(v) {
-    if (missions().indexOf(v) === -1) return
+    if (!missions().some(function (m) { return m.v === v })) return
     if (await commit({ t: stampNow(), v: v, kind: 'del' })) {
       drawTasks()
       refresh()
@@ -627,10 +693,14 @@
   }
 
   function printMissions() {
-    const list = missions()
-    const body = list.length
-      ? 'tasks (' + list.length + ')\n' + list.map(function (v, i) { return (i + 1) + '. ' + v }).join('\n')
+    const open = openMissions()
+    const scheduled = scheduledMissions()
+    let body = open.length
+      ? 'tasks (' + open.length + ')\n' + open.map(function (m, i) { return (i + 1) + '. ' + m.v }).join('\n')
       : 'tasks (0)'
+    if (scheduled.length) {
+      body += '\n\nscheduled\n' + scheduled.map(function (m) { return m.due + '  ' + m.v }).join('\n')
+    }
     return add(body, true)
   }
 
@@ -643,6 +713,8 @@
   function closeSheet() {
     sheet.hidden = true
     taskinput.value = ''
+    taskdate.value = ''
+    autosize(taskinput)
   }
 
   function bottom() { log.scrollTop = log.scrollHeight }
@@ -712,14 +784,14 @@
       let carried = 0
       if (mode === 'new' && !entries.length && carry.length) {
         if (previous) entries.push({ t: stampNow(), v: 'continued from ' + previous, kind: 'log' })
-        carry.forEach(function (v) { entries.push({ t: stampNow(), v: v, kind: 'add' }) })
+        carry.forEach(function (m) { entries.push({ t: stampNow(), v: m.v, due: m.due, kind: 'add' }) })
         await writeFile()
         carried = carry.length
       }
       connected()
       redraw()
       if (carried) {
-        say('Carried over ' + carried + (carried === 1 ? ' open mission.' : ' open missions.'))
+        say('Carried over ' + carried + (carried === 1 ? ' mission.' : ' missions.'))
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return
@@ -761,16 +833,15 @@
 
       if (text.charAt(0) === '-') {
         const rest = text.slice(1).trim()
-        const list = missions()
         if (/^\d+$/.test(rest)) {
-          const pick = list[parseInt(rest, 10) - 1]
+          const pick = openMissions()[parseInt(rest, 10) - 1]
           if (!pick) {
             say('No mission number ' + rest + '.', true)
             return
           }
-          return removeMission(pick)
+          return removeMission(pick.v)
         }
-        if (list.indexOf(rest) === -1) {
+        if (!missions().some(function (m) { return m.v === rest })) {
           say('No open mission matching that.', true)
           return
         }
@@ -792,26 +863,31 @@
     bottom()
   }
 
-  function autosize() {
-    input.style.height = 'auto'
-    input.style.height = Math.min(input.scrollHeight, 140) + 'px'
+  function autosize(el) {
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px'
   }
 
-  input.addEventListener('input', autosize)
+  function submitOnEnter(el, formEl) {
+    el.addEventListener('input', function () { autosize(el) })
+    el.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        formEl.requestSubmit()
+      }
+    })
+  }
 
-  input.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      form.requestSubmit()
-    }
-  })
+  submitOnEnter(input, form)
+  submitOnEnter(taskinput, taskform)
+  submitOnEnter(chapterinput, chapterform)
 
   form.addEventListener('submit', function (e) {
     e.preventDefault()
     const text = input.value.trim()
     if (!text) return
     input.value = ''
-    autosize()
+    autosize(input)
     add(text)
   })
 
@@ -842,6 +918,7 @@
   function closeChapterSheet() {
     csheet.hidden = true
     chapterinput.value = ''
+    autosize(chapterinput)
   }
 
   chapterBtn.addEventListener('click', function () {
@@ -874,8 +951,11 @@
     e.preventDefault()
     const v = taskinput.value.trim()
     if (!v) return
+    const due = taskdate.value || null
     taskinput.value = ''
-    addMission(v)
+    taskdate.value = ''
+    autosize(taskinput)
+    addMission(v, due)
   })
 
   document.getElementById('send').addEventListener('click', async function () {

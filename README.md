@@ -5,7 +5,9 @@
 A tiny, self-contained journal app that runs entirely in the browser — single HTML file, no build step, no server, no dependencies.
 
 - Writes entries with timestamps, grouped by day
-- Simple `task +` / `task -` lines double as an open-tasks list
+- Simple `task +` / `task -` lines double as an open-tasks list, with optional scheduling (a task can be given a future date and stays hidden from the open list until then)
+- Chapter dividers mark sections within a log
+- Right-to-left scripts (e.g. Hebrew) are detected automatically per line and aligned/punctuated correctly
 - Saves directly to a local file on disk via the File System Access API (Chrome/Edge), so your log lives in a plain text-ish `.html` file you control
 - Works offline, installable as a PWA
 
