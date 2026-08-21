@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0b0d0c">
@@ -27,7 +27,7 @@
   html, body {
     margin: 0;
     padding: 0;
-    height: 100%;
+    height: var(--app-h, 100%);
     background: var(--bg);
     overscroll-behavior: none;
   }
@@ -190,7 +190,10 @@
 
   .sheet {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--app-h, 100%);
     z-index: 10;
     display: flex;
     align-items: flex-end;
@@ -261,7 +264,6 @@
 
   .task .x:hover, .task .x:focus-visible { color: #e06c6c; border-color: transparent }
   .task.scheduled { opacity: .6 }
-  .task .due { flex: none; color: var(--stamp); font-size: 11px }
   .empty { color: var(--dim); padding: 14px 0 }
   .sublabel { color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin: 14px 0 4px }
 
@@ -287,11 +289,14 @@
   #taskform, #chapterform {
     flex: none;
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: 8px;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--rule);
   }
+
+  #taskinput, #chapterinput { flex-basis: 120px }
 
   #taskinput, #chapterinput {
     flex: 1;
@@ -312,7 +317,7 @@
 
   #taskinput::placeholder, #chapterinput::placeholder { color: var(--dim) }
 
-  #taskdate {
+  .datefield {
     flex: none;
     font: inherit;
     font-size: 13px;
@@ -324,6 +329,18 @@
     min-height: 30px;
     color-scheme: dark;
   }
+
+  .resched-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--rule);
+    flex-wrap: wrap;
+  }
+
+  .resched-row[hidden] { display: none }
+  .resched-row .label { color: var(--dim); font-size: 12px }
 </style>
 </head>
 <body>
@@ -343,14 +360,23 @@
     <div class="head">
       <span>open missions</span>
       <span class="spacer"></span>
+      <button id="reschedAllBtn" type="button">reschedule all</button>
       <button id="print" type="button">print</button>
       <button id="close" type="button">close</button>
+    </div>
+    <div id="reschedRow" class="resched-row" hidden>
+      <span class="label">move active tasks to</span>
+      <input id="reschedDate" class="datefield" type="date">
+      <input id="reschedTime" class="datefield" type="time">
+      <button id="reschedApply" type="button">apply</button>
+      <button id="reschedCancel" type="button">cancel</button>
     </div>
     <div id="tasklist"></div>
     <form id="taskform">
       <span class="caret">+</span>
       <textarea id="taskinput" rows="1" placeholder="new mission" autocomplete="off" autocapitalize="sentences" spellcheck="false" dir="auto"></textarea>
-      <input id="taskdate" type="date" title="schedule for a later date (optional)" aria-label="schedule for">
+      <input id="taskdate" class="datefield" type="date" title="schedule for a later date (optional)" aria-label="schedule for">
+      <input id="tasktime" class="datefield" type="time" title="schedule for a specific time (optional)" aria-label="schedule at time">
     </form>
   </div>
 </div>
@@ -413,14 +439,16 @@
   const canCreate = typeof window.showSaveFilePicker === 'function'
   const hasFS = canOpen || canCreate
   const STAMP = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] ([\s\S]*)$/
-  const TASK = /^task ([+\-])(?:@(\d{4}-\d{2}-\d{2}))? ([\s\S]*)$/
+  const TASK = /^task ([+\-~])(?:@(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?))? ([\s\S]*)$/
   const CHAPTER = /^chapter ([\s\S]*)$/
+  const TASK_KIND = { '+': 'add', '-': 'del', '~': 'reschedule' }
 
   const sheet = document.getElementById('sheet')
   const tasklist = document.getElementById('tasklist')
   const taskform = document.getElementById('taskform')
   const taskinput = document.getElementById('taskinput')
   const taskdate = document.getElementById('taskdate')
+  const tasktime = document.getElementById('tasktime')
   const tasksBtn = document.getElementById('tasks')
   const msheet = document.getElementById('msheet')
   const menuBtn = document.getElementById('menu')
@@ -428,6 +456,10 @@
   const chapterform = document.getElementById('chapterform')
   const chapterinput = document.getElementById('chapterinput')
   const chapterBtn = document.getElementById('chapter')
+  const reschedAllBtn = document.getElementById('reschedAllBtn')
+  const reschedRow = document.getElementById('reschedRow')
+  const reschedDate = document.getElementById('reschedDate')
+  const reschedTime = document.getElementById('reschedTime')
 
   let handle = null
   let entries = []
@@ -478,6 +510,21 @@
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
   }
 
+  function nowMinuteISO() {
+    const d = new Date()
+    return todayISO() + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+  }
+
+  function dueReached(due) {
+    if (!due) return true
+    return due.length > 10 ? due <= nowMinuteISO() : due <= todayISO()
+  }
+
+  function combineDue(datePart, timePart) {
+    if (!datePart) return null
+    return timePart ? datePart + 'T' + timePart : datePart
+  }
+
   function parse(text) {
     const out = []
     text.replace(/^\uFEFF/, '').split('\n').forEach(function (line) {
@@ -486,7 +533,7 @@
         let v = m[2]
         const op = v.match(TASK)
         if (op) {
-          out.push({ t: m[1], v: op[3], due: op[2] || null, kind: op[1] === '+' ? 'add' : 'del' })
+          out.push({ t: m[1], v: op[3], due: op[2] || null, kind: TASK_KIND[op[1]] })
           return
         }
         const ch = v.match(CHAPTER)
@@ -509,6 +556,7 @@
       let body
       if (e.kind === 'add') body = 'task +' + (e.due ? '@' + e.due : '') + ' ' + e.v
       else if (e.kind === 'del') body = 'task - ' + e.v
+      else if (e.kind === 'reschedule') body = 'task ~' + (e.due ? '@' + e.due : '') + ' ' + e.v
       else if (e.kind === 'chapter') body = 'chapter ' + e.v
       else body = (e.flag ? '\u200B' : '') + e.v
       return '[' + e.t + '] ' + body
@@ -530,7 +578,8 @@
     return (same ? 'today  ' : '') + DAYS[d.getDay()] + ' ' + (+p[2]) + ' ' + MONTHS[+p[1] - 1] + ' ' + p[0]
   }
 
-  function render(entry) {
+  function render(entry, target) {
+    target = target || log
     const day = entry.t.slice(0, 10)
     if (day !== shownDay) {
       shownDay = day
@@ -539,7 +588,7 @@
       const label = document.createElement('span')
       label.textContent = dayLabel(day)
       sep.appendChild(label)
-      log.appendChild(sep)
+      target.appendChild(sep)
     }
     if (entry.kind === 'chapter') {
       const div = document.createElement('div')
@@ -562,7 +611,7 @@
       div.appendChild(bar1)
       div.appendChild(row)
       div.appendChild(bar2)
-      log.appendChild(div)
+      target.appendChild(div)
       return
     }
     const div = document.createElement('div')
@@ -576,13 +625,15 @@
     t.textContent = entry.v
     div.appendChild(s)
     div.appendChild(t)
-    log.appendChild(div)
+    target.appendChild(div)
   }
 
   function redraw() {
     Array.prototype.slice.call(log.querySelectorAll('.entry, .day, .chapter')).forEach(function (n) { n.remove() })
     shownDay = null
-    entries.forEach(function (e) { if (e.kind !== 'add' && e.kind !== 'del') render(e) })
+    const frag = document.createDocumentFragment()
+    entries.forEach(function (e) { if (e.kind === 'log' || e.kind === 'chapter') render(e, frag) })
+    log.appendChild(frag)
     refresh()
     bottom()
   }
@@ -590,7 +641,7 @@
   function refresh() {
     const n = entries.filter(function (e) { return e.kind === 'log' }).length
     count.textContent = n + (n === 1 ? ' entry' : ' entries')
-    const open = openMissions().length
+    const open = partitionMissions().open.length
     tasksBtn.textContent = open ? 'tasks ' + open : 'tasks'
   }
 
@@ -603,14 +654,24 @@
         map.set(e.v, e.due || null)
       } else if (e.kind === 'del') {
         map.delete(e.v)
+      } else if (e.kind === 'reschedule') {
+        if (map.has(e.v)) map.set(e.v, e.due || null)
       }
     })
     return Array.from(map, function (pair) { return { v: pair[0], due: pair[1] } })
   }
 
-  function isDue(m) { return !m.due || m.due <= todayISO() }
-  function openMissions() { return missions().filter(isDue) }
-  function scheduledMissions() { return missions().filter(function (m) { return !isDue(m) }) }
+  function partitionMissions() {
+    const open = []
+    const scheduled = []
+    missions().forEach(function (m) { (dueReached(m.due) ? open : scheduled).push(m) })
+    return { open: open, scheduled: scheduled }
+  }
+
+  function openMissions() { return partitionMissions().open }
+  function scheduledMissions() { return partitionMissions().scheduled }
+
+  function dueLabel(due) { return due.replace('T', '  ') }
 
   function taskRow(m, label, scheduled) {
     const row = document.createElement('div')
@@ -636,8 +697,10 @@
 
   function drawTasks() {
     tasklist.innerHTML = ''
-    const open = openMissions()
-    const scheduled = scheduledMissions()
+    const parts = partitionMissions()
+    const open = parts.open
+    const scheduled = parts.scheduled
+    reschedAllBtn.disabled = !open.length
     if (!open.length && !scheduled.length) {
       const p = document.createElement('div')
       p.className = 'empty'
@@ -651,21 +714,24 @@
       label.className = 'sublabel'
       label.textContent = 'scheduled'
       tasklist.appendChild(label)
-      scheduled.forEach(function (m) { tasklist.appendChild(taskRow(m, m.due, true)) })
+      scheduled.forEach(function (m) { tasklist.appendChild(taskRow(m, dueLabel(m.due), true)) })
     }
   }
 
-  async function commit(entry) {
-    entries.push(entry)
+  async function commitMany(list) {
+    const start = entries.length
+    list.forEach(function (e) { entries.push(e) })
     try {
       await writeFile()
     } catch (e) {
-      entries.pop()
+      entries.length = start
       say('Write failed, nothing was logged: ' + (e && e.message ? e.message : e), true)
       return false
     }
     return true
   }
+
+  function commit(entry) { return commitMany([entry]) }
 
   async function addMission(v, due) {
     if (!v) return
@@ -684,6 +750,17 @@
     }
   }
 
+  async function rescheduleAllOpen(due) {
+    const open = openMissions()
+    if (!open.length) return
+    const now = stampNow()
+    const list = open.map(function (m) { return { t: now, v: m.v, due: due, kind: 'reschedule' } })
+    if (await commitMany(list)) {
+      drawTasks()
+      refresh()
+    }
+  }
+
   async function addChapter(title) {
     const entry = { t: stampNow(), v: title, kind: 'chapter' }
     if (!await commit(entry)) return
@@ -693,13 +770,12 @@
   }
 
   function printMissions() {
-    const open = openMissions()
-    const scheduled = scheduledMissions()
-    let body = open.length
-      ? 'tasks (' + open.length + ')\n' + open.map(function (m, i) { return (i + 1) + '. ' + m.v }).join('\n')
+    const parts = partitionMissions()
+    let body = parts.open.length
+      ? 'tasks (' + parts.open.length + ')\n' + parts.open.map(function (m, i) { return (i + 1) + '. ' + m.v }).join('\n')
       : 'tasks (0)'
-    if (scheduled.length) {
-      body += '\n\nscheduled\n' + scheduled.map(function (m) { return m.due + '  ' + m.v }).join('\n')
+    if (parts.scheduled.length) {
+      body += '\n\nscheduled\n' + parts.scheduled.map(function (m) { return dueLabel(m.due) + '  ' + m.v }).join('\n')
     }
     return add(body, true)
   }
@@ -714,7 +790,15 @@
     sheet.hidden = true
     taskinput.value = ''
     taskdate.value = ''
+    tasktime.value = ''
     autosize(taskinput)
+    hideReschedRow()
+  }
+
+  function hideReschedRow() {
+    reschedRow.hidden = true
+    reschedDate.value = ''
+    reschedTime.value = ''
   }
 
   function bottom() { log.scrollTop = log.scrollHeight }
@@ -782,16 +866,20 @@
       await putHandle(handle)
       await readFile()
       let carried = 0
+      let carryFailed = false
       if (mode === 'new' && !entries.length && carry.length) {
-        if (previous) entries.push({ t: stampNow(), v: 'continued from ' + previous, kind: 'log' })
-        carry.forEach(function (m) { entries.push({ t: stampNow(), v: m.v, due: m.due, kind: 'add' }) })
-        await writeFile()
-        carried = carry.length
+        const list = []
+        if (previous) list.push({ t: stampNow(), v: 'continued from ' + previous, kind: 'log' })
+        carry.forEach(function (m) { list.push({ t: stampNow(), v: m.v, due: m.due, kind: 'add' }) })
+        if (await commitMany(list)) carried = carry.length
+        else carryFailed = true
       }
       connected()
       redraw()
       if (carried) {
         say('Carried over ' + carried + (carried === 1 ? ' mission.' : ' missions.'))
+      } else if (carryFailed) {
+        say('Connected, but carrying missions over failed. Re-add them from the tasks sheet.', true)
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return
@@ -942,6 +1030,7 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return
+    if (!reschedRow.hidden) { hideReschedRow(); return }
     if (!sheet.hidden) closeSheet()
     if (!msheet.hidden) msheet.hidden = true
     if (!csheet.hidden) closeChapterSheet()
@@ -951,11 +1040,30 @@
     e.preventDefault()
     const v = taskinput.value.trim()
     if (!v) return
-    const due = taskdate.value || null
+    const due = combineDue(taskdate.value, tasktime.value)
     taskinput.value = ''
     taskdate.value = ''
+    tasktime.value = ''
     autosize(taskinput)
     addMission(v, due)
+  })
+
+  reschedAllBtn.addEventListener('click', function () {
+    if (reschedAllBtn.disabled) return
+    reschedRow.hidden = !reschedRow.hidden
+    if (!reschedRow.hidden) reschedDate.focus()
+  })
+
+  document.getElementById('reschedCancel').addEventListener('click', hideReschedRow)
+
+  document.getElementById('reschedApply').addEventListener('click', async function () {
+    const due = combineDue(reschedDate.value, reschedTime.value)
+    if (!due) {
+      say('Pick a date to reschedule to.', true)
+      return
+    }
+    hideReschedRow()
+    await rescheduleAllOpen(due)
   })
 
   document.getElementById('send').addEventListener('click', async function () {
@@ -984,6 +1092,22 @@
       say('Share not available here, so the file was downloaded instead.', true)
     }
   })
+
+  /* ---------- keyboard-safe viewport ---------- */
+
+  function syncViewportHeight() {
+    const h = window.visualViewport ? window.visualViewport.height : window.innerHeight
+    document.documentElement.style.setProperty('--app-h', h + 'px')
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncViewportHeight)
+    window.visualViewport.addEventListener('scroll', syncViewportHeight)
+  } else {
+    window.addEventListener('resize', syncViewportHeight)
+  }
+  window.addEventListener('load', syncViewportHeight)
+  syncViewportHeight()
 
   /* ---------- boot ---------- */
 
