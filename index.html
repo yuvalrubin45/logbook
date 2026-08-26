@@ -313,6 +313,11 @@
 
   .task .snooze:hover, .task .snooze:focus-visible { color: var(--prompt); border-color: transparent }
   .task.scheduled { opacity: .6 }
+
+  .days-row { display: flex; flex-wrap: wrap; gap: var(--sp-1) }
+  .day-chip, #everyDayBtn { padding: 0 var(--sp-2); font-size: var(--fs-meta) }
+  .day-chip.active, #everyDayBtn.active { color: var(--prompt); border-color: var(--prompt) }
+
   .empty { color: var(--dim); padding: var(--sp-4) 0 }
   .sublabel { color: var(--dim); font-size: var(--fs-meta); letter-spacing: .08em; text-transform: uppercase; margin: var(--sp-4) 0 var(--sp-1) }
 
@@ -344,7 +349,7 @@
     border-top: 1px solid var(--rule);
   }
 
-  #taskform {
+  #taskform, #recurform {
     flex: none;
     display: flex;
     flex-direction: column;
@@ -353,9 +358,9 @@
     border-top: 1px solid var(--rule);
   }
 
-  #taskform .field-row { display: flex; align-items: flex-start; gap: var(--sp-2) }
+  #taskform .field-row, #recurform .field-row { display: flex; align-items: flex-start; gap: var(--sp-2) }
 
-  #taskinput, #chapterinput {
+  #taskinput, #chapterinput, #recurinput {
     flex: 1;
     min-width: 0;
     text-align: start;
@@ -373,7 +378,7 @@
     caret-color: var(--prompt);
   }
 
-  #taskinput::placeholder, #chapterinput::placeholder { color: var(--dim) }
+  #taskinput::placeholder, #chapterinput::placeholder, #recurinput::placeholder { color: var(--dim) }
 
 </style>
 </head>
@@ -395,7 +400,8 @@
     <div class="head">
       <span>open missions</span>
       <span class="spacer"></span>
-      <button id="reschedAllBtn" type="button">+12h</button>
+      <button id="recurBtn" type="button">recurring</button>
+      <button id="reschedAllBtn" type="button">tomorrow</button>
       <button id="print" type="button">print</button>
       <button id="close" type="button">close</button>
     </div>
@@ -405,6 +411,35 @@
         <span class="caret">+</span>
         <textarea id="taskinput" rows="1" placeholder="new mission" autocomplete="off" autocapitalize="sentences" spellcheck="false" dir="auto"></textarea>
       </div>
+    </form>
+  </div>
+</div>
+
+<div id="rsheet" class="sheet" hidden>
+  <div class="box">
+    <div class="grip"></div>
+    <div class="head">
+      <span>recurring tasks</span>
+      <span class="spacer"></span>
+      <button id="rclose" type="button">close</button>
+    </div>
+    <div id="recurlist"></div>
+    <form id="recurform">
+      <div class="field-row">
+        <span class="caret">+</span>
+        <textarea id="recurinput" rows="1" placeholder="recurring task" autocomplete="off" autocapitalize="sentences" spellcheck="false" dir="auto"></textarea>
+      </div>
+      <div class="days-row">
+        <button type="button" id="everyDayBtn" aria-pressed="false">every day</button>
+        <button type="button" class="day-chip" data-day="sun" aria-pressed="false">Sun</button>
+        <button type="button" class="day-chip" data-day="mon" aria-pressed="false">Mon</button>
+        <button type="button" class="day-chip" data-day="tue" aria-pressed="false">Tue</button>
+        <button type="button" class="day-chip" data-day="wed" aria-pressed="false">Wed</button>
+        <button type="button" class="day-chip" data-day="thu" aria-pressed="false">Thu</button>
+        <button type="button" class="day-chip" data-day="fri" aria-pressed="false">Fri</button>
+        <button type="button" class="day-chip" data-day="sat" aria-pressed="false">Sat</button>
+      </div>
+      <button type="submit">add</button>
     </form>
   </div>
 </div>
@@ -469,7 +504,9 @@
   const STAMP = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] ([\s\S]*)$/
   const TASK = /^task ([+\-~])(?:@(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?))? ([\s\S]*)$/
   const CHAPTER = /^chapter ([\s\S]*)$/
+  const RECUR = /^recur ([+\-])(?:@([a-z,]+))? ([\s\S]*)$/
   const TASK_KIND = { '+': 'add', '-': 'del', '~': 'reschedule' }
+  const DAY_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
   const sheet = document.getElementById('sheet')
   const tasklist = document.getElementById('tasklist')
@@ -483,6 +520,14 @@
   const chapterinput = document.getElementById('chapterinput')
   const chapterBtn = document.getElementById('chapter')
   const reschedAllBtn = document.getElementById('reschedAllBtn')
+  const recurBtn = document.getElementById('recurBtn')
+  const rsheet = document.getElementById('rsheet')
+  const recurlist = document.getElementById('recurlist')
+  const recurform = document.getElementById('recurform')
+  const recurinput = document.getElementById('recurinput')
+  const everyDayBtn = document.getElementById('everyDayBtn')
+  const dayChips = Array.prototype.slice.call(document.querySelectorAll('.day-chip'))
+  const selectedDays = new Set()
 
   let handle = null
   let entries = []
@@ -544,9 +589,22 @@
     return due.length > 10 ? due <= nowMinuteISO() : due <= todayISO()
   }
 
-  function plusHours(h) {
-    const d = new Date(Date.now() + h * 60 * 60 * 1000)
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+  function tomorrowISO() {
+    const d = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+  }
+
+  function logicalDayOf(ts) {
+    const d = new Date(ts.replace(' ', 'T'))
+    d.setTime(d.getTime() - 4 * 60 * 60 * 1000)
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+  }
+
+  function logicalDayISO() { return logicalDayOf(stampNow()) }
+
+  function logicalWeekday() {
+    const d = new Date(Date.now() - 4 * 60 * 60 * 1000)
+    return DAY_ORDER[d.getDay()]
   }
 
   function parse(text) {
@@ -563,6 +621,11 @@
         const ch = v.match(CHAPTER)
         if (ch) {
           out.push({ t: m[1], v: ch[1], kind: 'chapter' })
+          return
+        }
+        const rc = v.match(RECUR)
+        if (rc) {
+          out.push({ t: m[1], v: rc[3], schedule: rc[2] || null, kind: rc[1] === '+' ? 'recur-add' : 'recur-del' })
           return
         }
         const flag = v.charAt(0) === '\u200B'
@@ -582,6 +645,8 @@
       else if (e.kind === 'del') body = 'task - ' + e.v
       else if (e.kind === 'reschedule') body = 'task ~' + (e.due ? '@' + e.due : '') + ' ' + e.v
       else if (e.kind === 'chapter') body = 'chapter ' + e.v
+      else if (e.kind === 'recur-add') body = 'recur +' + (e.schedule ? '@' + e.schedule : '') + ' ' + e.v
+      else if (e.kind === 'recur-del') body = 'recur - ' + e.v
       else body = (e.flag ? '\u200B' : '') + e.v
       return '[' + e.t + '] ' + body
     }).join('\n') + '\n'
@@ -704,6 +769,49 @@
 
   function dueLabel(due) { return due.replace('T', '  ') }
 
+  /* ---------- recurring tasks ---------- */
+
+  function recurRules() {
+    const map = new Map()
+    entries.forEach(function (e) {
+      if (e.kind === 'recur-add') map.set(e.v, e.schedule)
+      else if (e.kind === 'recur-del') map.delete(e.v)
+    })
+    return Array.from(map, function (pair) { return { v: pair[0], schedule: pair[1] } })
+  }
+
+  function scheduleLabel(schedule) {
+    const days = schedule.split(',')
+    if (days.length === 7) return 'daily'
+    const NAMES = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' }
+    return DAY_ORDER.filter(function (d) { return days.indexOf(d) !== -1 }).map(function (d) { return NAMES[d] }).join(', ')
+  }
+
+  function firedForLogicalDay(v) {
+    const day = logicalDayISO()
+    return entries.some(function (e) { return e.kind === 'add' && e.v === v && logicalDayOf(e.t) === day })
+  }
+
+  // Called explicitly after link()/restore(), not from inside redraw() itself:
+  // commitMany() also calls redraw() while reconnecting, and firing from there
+  // would recurse into a second commitMany() mid-write.
+  async function fireRecurring() {
+    const day = logicalWeekday()
+    const active = missions()
+    const toFire = recurRules().filter(function (r) {
+      return r.schedule.split(',').indexOf(day) !== -1 &&
+        !active.some(function (m) { return m.v === r.v }) &&
+        !firedForLogicalDay(r.v)
+    })
+    if (!toFire.length) return
+    const now = stampNow()
+    const list = toFire.map(function (r) { return { t: now, v: r.v, due: null, kind: 'add' } })
+    if (await commitMany(list)) {
+      drawTasks()
+      refresh()
+    }
+  }
+
   function taskRow(m, label, scheduled) {
     const row = document.createElement('div')
     row.className = scheduled ? 'task scheduled' : 'task'
@@ -716,9 +824,9 @@
     const snooze = document.createElement('button')
     snooze.className = 'snooze'
     snooze.type = 'button'
-    snooze.textContent = '+12h'
-    snooze.setAttribute('aria-label', 'push 12 hours')
-    snooze.addEventListener('click', function () { rescheduleMission(m.v, plusHours(12)) })
+    snooze.textContent = 'tomorrow'
+    snooze.setAttribute('aria-label', 'push to tomorrow')
+    snooze.addEventListener('click', function () { rescheduleMission(m.v, tomorrowISO()) })
     const x = document.createElement('button')
     x.className = 'x'
     x.type = 'button'
@@ -753,6 +861,40 @@
       tasklist.appendChild(label)
       scheduled.forEach(function (m) { tasklist.appendChild(taskRow(m, dueLabel(m.due), true)) })
     }
+  }
+
+  function recurRow(rule) {
+    const row = document.createElement('div')
+    row.className = 'task'
+    const label = document.createElement('span')
+    label.className = 'n'
+    label.textContent = scheduleLabel(rule.schedule)
+    const t = document.createElement('div')
+    t.className = 'v'
+    fillLines(t, rule.v)
+    const x = document.createElement('button')
+    x.className = 'x'
+    x.type = 'button'
+    x.textContent = '×'
+    x.setAttribute('aria-label', 'remove recurring task')
+    x.addEventListener('click', function () { removeRecur(rule.v) })
+    row.appendChild(label)
+    row.appendChild(t)
+    row.appendChild(x)
+    return row
+  }
+
+  function drawRecur() {
+    recurlist.innerHTML = ''
+    const rules = recurRules()
+    if (!rules.length) {
+      const p = document.createElement('div')
+      p.className = 'empty'
+      p.textContent = 'no recurring tasks'
+      recurlist.appendChild(p)
+      return
+    }
+    rules.forEach(function (r) { recurlist.appendChild(recurRow(r)) })
   }
 
   async function commitMany(list) {
@@ -805,6 +947,22 @@
     }
   }
 
+  async function addRecur(v, schedule) {
+    if (!v || !schedule) return
+    if (recurRules().some(function (r) { return r.v === v })) return
+    if (await commit({ t: stampNow(), v: v, schedule: schedule, kind: 'recur-add' })) {
+      drawRecur()
+      fireRecurring()
+    }
+  }
+
+  async function removeRecur(v) {
+    if (!recurRules().some(function (r) { return r.v === v })) return
+    if (await commit({ t: stampNow(), v: v, kind: 'recur-del' })) {
+      drawRecur()
+    }
+  }
+
   async function rescheduleAllOpen(due) {
     const open = openMissions()
     if (!open.length) return
@@ -846,6 +1004,23 @@
     sheet.hidden = true
     taskinput.value = ''
     autosize(taskinput)
+  }
+
+  function openRecurSheet() {
+    sheet.hidden = true
+    drawRecur()
+    rsheet.hidden = false
+  }
+
+  function closeRecurSheet() {
+    rsheet.hidden = true
+    recurinput.value = ''
+    autosize(recurinput)
+    selectedDays.clear()
+    drawTasks()
+    sheet.hidden = false
+    dayChips.forEach(function (c) { setChipActive(c, false) })
+    setChipActive(everyDayBtn, false)
   }
 
   function bottom() { log.scrollTop = log.scrollHeight }
@@ -924,6 +1099,7 @@
       }
       connected()
       redraw()
+      fireRecurring()
       if (carried) {
         say('Carried over ' + carried + (carried === 1 ? ' mission.' : ' missions.'))
       } else if (carryFailed) {
@@ -947,6 +1123,7 @@
       await readFile()
       connected()
       redraw()
+      fireRecurring()
     }
   }
 
@@ -1079,6 +1256,7 @@
     if (!sheet.hidden) closeSheet()
     if (!msheet.hidden) msheet.hidden = true
     if (!csheet.hidden) closeChapterSheet()
+    if (!rsheet.hidden) closeRecurSheet()
   })
 
   taskform.addEventListener('submit', function (e) {
@@ -1092,8 +1270,55 @@
 
   reschedAllBtn.addEventListener('click', async function () {
     if (reschedAllBtn.disabled) return
-    await rescheduleAllOpen(plusHours(12))
+    await rescheduleAllOpen(tomorrowISO())
   })
+
+  function setChipActive(el, on) {
+    el.classList.toggle('active', on)
+    el.setAttribute('aria-pressed', on)
+  }
+
+  dayChips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      const d = chip.dataset.day
+      if (selectedDays.has(d)) selectedDays.delete(d); else selectedDays.add(d)
+      setChipActive(chip, selectedDays.has(d))
+      setChipActive(everyDayBtn, selectedDays.size === 7)
+    })
+  })
+
+  everyDayBtn.addEventListener('click', function () {
+    const on = selectedDays.size !== 7
+    dayChips.forEach(function (chip) {
+      if (on) selectedDays.add(chip.dataset.day); else selectedDays.delete(chip.dataset.day)
+      setChipActive(chip, on)
+    })
+    setChipActive(everyDayBtn, on)
+  })
+
+  recurBtn.addEventListener('click', openRecurSheet)
+  document.getElementById('rclose').addEventListener('click', closeRecurSheet)
+  rsheet.addEventListener('click', function (e) { if (e.target === rsheet) closeRecurSheet() })
+
+  submitOnEnter(recurinput, recurform)
+  recurform.addEventListener('submit', function (e) {
+    e.preventDefault()
+    const v = recurinput.value.trim()
+    if (!v) return
+    if (!selectedDays.size) { say('Pick at least one day first.', true); return }
+    const schedule = DAY_ORDER.filter(function (d) { return selectedDays.has(d) }).join(',')
+    recurinput.value = ''
+    autosize(recurinput)
+    selectedDays.clear()
+    dayChips.forEach(function (c) { setChipActive(c, false) })
+    setChipActive(everyDayBtn, false)
+    addRecur(v, schedule)
+  })
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && handle) fireRecurring()
+  })
+  setInterval(function () { if (handle) fireRecurring() }, 15 * 60 * 1000)
 
   document.getElementById('send').addEventListener('click', async function () {
     if (!handle) {
